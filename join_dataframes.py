@@ -35,9 +35,3 @@ final_df.drop('Unnamed: 0', axis=1, inplace=True)  # Dropping one unuseful colum
 # Saving the final dataframe
 name_database = 'Final Database.csv'
 final_df.to_csv(os.getcwd() + '/Datasets/HNEI_Processed/' + name_database)
-
-
-# final_df.sort_values(by='Cycle_Index', inplace=True)
-# final_df.drop('Unnamed: 0', axis=1, inplace=True)
-# name_database = 'Final Database.csv'
-# final_df.to_csv(os.getcwd() + '/Datasets/HNEI_Processed/' + name_database)
