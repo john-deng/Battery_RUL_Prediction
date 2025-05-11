@@ -1,0 +1,62 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  labels:
+    app: battery-rul-prediction
+  name: battery-rul-prediction
+spec:
+  backoffLimit: 4
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        app: battery-rul-prediction
+    spec:
+      containers:
+      - name: battery-rul-prediction
+        image: titan.hub:5000/demo/battery-rul-prediction
+        workingDir: /workspace/battery-rul-prediction
+        command:
+        - python
+        - train.py
+        env:
+        - name: HOME
+          value: /home/ide
+        - name: PROJECT_NAME
+          value: battery-rul-prediction
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.namespace
+        - name: DOMAIN
+          value: 10.10.17.22
+        - name: CONTROLLER_NAMESPACE
+          value: titan-system
+        - name: USE_SUBDOMAIN
+          value: "false"
+        - name: PIP_INDEX_URL
+          value: https://mirrors.aliyun.com/pypi/simple
+        imagePullPolicy: Always
+        resources:
+          limits:
+            cpu: "20"
+            memory: 200Gi
+            nvidia.com/gpu: 1
+          requests:
+            cpu: 50m
+            memory: 100Mi
+            nvidia.com/gpu: 1
+        volumeMounts:
+          - mountPath: /workspace
+            name: generic
+            subPath: battery-rul-prediction/workspace
+      restartPolicy: OnFailure
+      volumes:
+        - name: cache-volume
+          emptyDir:
+            medium: Memory
+            sizeLimit: 512Mi
+        - name: generic
+          persistentVolumeClaim:
+            claimName: workspace
