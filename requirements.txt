@@ -7,3 +7,5 @@ matplotlib
 torch
 torchvision
 torchaudio
+tqdm
+joblib

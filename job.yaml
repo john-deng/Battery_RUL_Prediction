@@ -6,7 +6,7 @@ metadata:
   name: battery-rul-prediction
 spec:
   backoffLimit: 4
-  activeDeadlineSeconds: 600
+  #activeDeadlineSeconds: 600
   template:
     metadata:
       labels:
@@ -14,11 +14,12 @@ spec:
     spec:
       containers:
       - name: battery-rul-prediction
-        image: titan.hub:5000/demo/battery-rul-prediction
+        image: titan.hub:5000/demo/battery-rul-prediction:v2
         workingDir: /workspace/battery-rul-prediction
         command:
-        - python
-        - train.py
+        - tail
+        - -f
+        - /dev/stdout
         env:
         - name: HOME
           value: /home/ide
@@ -37,7 +38,7 @@ spec:
           value: "false"
         - name: PIP_INDEX_URL
           value: https://mirrors.aliyun.com/pypi/simple
-        imagePullPolicy: Always
+        imagePullPolicy: IfNotPresent
         resources:
           limits:
             cpu: "20"
