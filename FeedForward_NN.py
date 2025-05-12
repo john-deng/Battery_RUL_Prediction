@@ -8,171 +8,230 @@ from torch.utils.data.sampler import SubsetRandomSampler
 import os
 import matplotlib.pyplot as plt
 import seaborn as sns
-
 sns.set()
 
-# 启用cuDNN自动调优和确定性配置
-torch.backends.cudnn.benchmark = True
-torch.backends.cudnn.deterministic = False  # 允许非确定性优化以获得更快速度
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Using device: {device}")
-
-# 调整后的超参数
-batch_size = 256  # 大幅增大批量以利用大显存
-input_size = 7
-hidden_size = 512  # 增大隐藏层维度以更好利用并行计算
+# Hyperparameters
+batch_size = 6
+input_size = 6
+hidden_size = 10
 num_classes = 1
-learning_rate = 0.001  # 增大学习率配合大batch
-epochs = 200  # 减少总epoch数（因为每个epoch处理更多数据）
+learning_rate = 0.0001
+epochs = 500
 
 
 class BatteryDataSet(Dataset):
-    # 保持原有数据预处理逻辑不变
+
     def __init__(self):
-        dataset_raw = pd.read_csv(os.getcwd() + '/Datasets/HNEI_Processed/Final Database.csv')
-        dataset_raw.drop('Unnamed: 0', axis=1, inplace=True)
-
-        data = dataset_raw.values[:, :-1]
-        trans = MinMaxScaler()
-        data = trans.fit_transform(data)
-        dataset = pd.DataFrame(data)
-        dataset_scaled = dataset.join(dataset_raw['RUL'])
-        scaled_df_np = dataset_scaled.to_numpy(dtype=np.float32)
-
-        self.x = torch.from_numpy(scaled_df_np[:, 2:-1])
-        self.y = torch.from_numpy(scaled_df_np[:, [-1]])
-        self.n_samples = scaled_df_np.shape[0]
+        # Data loading
+        xy = scaled_df_np
+        self.x = torch.from_numpy(xy[:, 2:-2])
+        self.y = torch.from_numpy(xy[:, [-1]])
+        self.n_samples = xy.shape[0]
 
     def __getitem__(self, index):
         return self.x[index], self.y[index]
 
     def __len__(self):
+        # len(Dataset)
         return self.n_samples
 
 
-def create_loaders(dataset, batch_size):
-    dataset_size = len(dataset)
-    indices = list(range(dataset_size))
-    split = int(np.floor(0.8 * dataset_size))
+def classifyer(dataset, batch_size, shuffle_dataset=False):
 
-    # 使用更高效的数据分割方式
-    train_indices, test_indices = indices[:split], indices[split:]
+    # get the dataset size
+    dataset_len = len(dataset)
 
-    train_loader = DataLoader(
-        dataset,
-        batch_size=batch_size,
-        sampler=SubsetRandomSampler(train_indices),
-        num_workers=8,  # 增加数据加载线程
-        pin_memory=True,  # 启用锁页内存
-        persistent_workers=True  # 保持workers存活
-    )
-    test_loader = DataLoader(
-        dataset,
-        batch_size=batch_size * 2,  # 增大测试batch size
-        sampler=SubsetRandomSampler(test_indices),
-        num_workers=8,
-        pin_memory=True,
-        persistent_workers=True
-    )
-    return train_loader, test_loader
+    dataset_size = torch.tensor([dataset_len])
+
+    # get the indices
+    indices = list(range(dataset_len))
+
+    # percentage share of data set
+    # train:        ~ 80 %
+    # test:         ~ 20 %
+
+    # define borders
+    first_split = int(torch.floor(0.8 * dataset_size))
+
+    # set indices for train and test
+    train_indices = indices[:first_split]
+    test_indices = indices[first_split:]
+
+    # shuffle the dataset
+    if shuffle_dataset:
+        np.random.seed()
+        np.random.shuffle(train_indices)
+        np.random.shuffle(test_indices)
+
+    # set train dataset ot samplers and loader
+    train_sampler = SubsetRandomSampler(train_indices)
+    train_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, sampler=train_sampler)
+
+    # set test dataset ot samplers and loader
+    test_sampler = SubsetRandomSampler(test_indices)
+    test_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, sampler=test_sampler)
+
+    return (train_loader, test_loader)
 
 
 class NeuralNet(nn.Module):
     def __init__(self, input_size, hidden_size, num_classes):
-        super().__init__()
-        self.layers = nn.Sequential(
-            nn.Linear(input_size, hidden_size),
-            nn.ReLU(inplace=True),  # 使用inplace操作节省内存
-            nn.Linear(hidden_size, 1024),
-            nn.ReLU(inplace=True),
-            nn.Linear(1024, 512),
-            nn.ReLU(inplace=True),
-            nn.Linear(512, num_classes)
-        )
-
-        # 初始化权重
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
+        super(NeuralNet, self).__init__()
+        self.l1 = nn.Linear(input_size, hidden_size)
+        self.relu = nn.ReLU()
+        self.l2 = nn.Linear(hidden_size, 50)
+        self.relu = nn.ReLU()
+        self.l3 = nn.Linear(50, 20)
+        self.relu = nn.ReLU()
+        self.l4 = nn.Linear(20, 5)
+        self.relu = nn.ReLU()
+        self.l5 = nn.Linear(5, num_classes)
 
     def forward(self, x):
-        return self.layers(x)
+        out = self.l1(x)
+        out = self.relu(out)
+        out = self.l2(out)
+        out = self.relu(out)
+        out = self.l3(out)
+        out = self.relu(out)
+        out = self.l4(out)
+        out = self.relu(out)
+        out = self.l5(out)
+        return out
 
 
-def train_loop(train_loader, model, loss_fn, optimizer, scaler):
-    model.train()
-    for features, rul in train_loader:
-        # 异步数据迁移
-        features = features.to(device, non_blocking=True)
-        rul = rul.to(device, non_blocking=True)
+# Training function
+def train_loop(train_loader, model, loss_fn, optimizer):
+    # size = len(train_loader)
+    for batch, (features, RUL) in enumerate(train_loader):
 
-        # 自动混合精度
-        with torch.cuda.amp.autocast():
-            outputs = model(features)
-            loss = loss_fn(outputs, rul)
+        # Forward path
+        outputs = model(features)
+        loss = loss_fn(outputs, RUL)
 
-        # 梯度缩放和反向传播优化
-        scaler.scale(loss).backward()
-        scaler.step(optimizer)
-        scaler.update()
-        optimizer.zero_grad(set_to_none=True)  # 更高效的梯度清零
+        # Backwards path
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        # if batch % 100 == 0:
+            # loss, current = loss.item(), batch*len(features)
+            # print(f'loss: {loss:>7f} [{current:>5d}/{size:>5d}]')
 
 
-def test_loop(test_loader, model, loss_fn):
-    model.eval()
+# Test function
+def test_loop(dataloader, model, loss_fn):
+    num_batches = len(dataloader)
     test_loss = 0
+
     diff_list = []
+    targets_list = []
+    pred_list = []
 
-    with torch.inference_mode():  # 更高效的推理模式
-        for features, rul in test_loader:
-            features = features.to(device, non_blocking=True)
-            rul = rul.to(device, non_blocking=True)
+    with torch.no_grad():
+        for X, y in dataloader:
+            pred = model(X)
+            test_loss += loss_fn(pred, y).item()
 
-            # 保持全精度进行计算
-            with torch.cuda.amp.autocast(enabled=False):
-                preds = model(features.float())  # 显式转换为float32
-                test_loss += loss_fn(preds, rul).item()
+            # Difference between prediction and target
+            diff = abs(y - pred) / y
+            diff = diff.numpy()
+            mean_diff = np.mean(diff)
+            diff_list.append(mean_diff)
 
-            # 原位计算指标
-            diff = torch.abs(preds - rul) / rul
-            diff_list.append(diff.mean().cpu())
+            # # Target vs prediction
+            pred_np = pred.squeeze().tolist()
+            target_np = y.squeeze().tolist()
 
-    avg_diff = torch.mean(torch.tensor(diff_list)).item() * 100
-    avg_loss = test_loss / len(test_loader)
-    print(f"Test Results:\nAvg Difference: {avg_diff:.2f}%\nAvg Loss: {avg_loss:.4f}\n")
+            try:
+                for i in pred_np:
+
+                    pred_list.append(i)
+                for i in target_np:
+                    targets_list.append(i)
+            except:
+                pass
+
+    # Average loss
+    test_loss /= num_batches
+
+    # Average difference
+    difference_mean = np.mean(diff_list)
+
+    # Print the average difference and average loss
+    print(f"Test: \n Avg Difference: {(100*difference_mean):>0.2f}%, Avg loss: {test_loss:>8f} \n")
+
+    # Minimum difference and its epoch
+    min_diff_dict[t+1] = (difference_mean*100)
+    min_diff_value = min(min_diff_dict.items(), key=lambda x:x[1])
+    print("LOWEST DIFFERENCE AND EPOCH:")
+    print(f"Epoch: {min_diff_value[0]}, diff: {min_diff_value[1]:>0.2f}%")
+
+    # PLOT Target vs Prediction
+    # if t % 10 == 0:
+
+    plt.rcParams["figure.dpi"] = 600
+    plt.scatter(targets_list, pred_list)
+    plt.xlabel('Target', fontsize=10)
+    plt.ylabel('Prediction', fontsize=10)
+    plt.ylim(0, 1300)
+    plt.title(f"Epoch {t+1}", fontsize=13)
+    plt.show()
+
+
+    # PLOT Difference
+
+    # plt.scatter(t, difference_mean*100)
+    # plt.ylim(0, 70)
+    # plt.xlabel('Epoch')
+    # plt.ylabel('Target-Pred Difference (%)')
+    # plt.scatter(t, test_loss)
 
 
 if __name__ == "__main__":
-    # 初始化
+
+    # Import data
+    dataset_raw = pd.read_csv(os.getcwd() + '/Datasets/HNEI_Processed/Final Database.csv')
+    dataset_raw.drop('Unnamed: 0', axis=1, inplace=True)
+
+    # Feature scaling
+    data = dataset_raw.values[:, :-1]
+    trans = MinMaxScaler()
+    data = trans.fit_transform(data)
+    dataset = pd.DataFrame(data)
+    dataset_scaled = dataset.join(dataset_raw['RUL'])
+    scaled_df_np = dataset_scaled.to_numpy(dtype=np.float32)
+
+    # Load dataset
     dataset = BatteryDataSet()
-    train_loader, test_loader = create_loaders(dataset, batch_size)
 
-    model = NeuralNet(input_size, hidden_size, num_classes).to(device)
+    # Train and test loader
+    train_loader, test_loader = classifyer(dataset=dataset, batch_size=batch_size
+                                                         , shuffle_dataset=True)
+    # Init model
+    model = NeuralNet(input_size, hidden_size, num_classes)
 
-    # 使用LAMB优化器更适合大batch
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=0.01)
-    loss_fn = nn.HuberLoss()  # 改用更鲁棒的损失函数
-    scaler = torch.cuda.amp.GradScaler()  # 梯度缩放器
+    # Loss function
+    loss_fn = nn.L1Loss()
 
-    # 学习率预热
-    warmup_epochs = 5
-    scheduler = torch.optim.lr_scheduler.LambdaLR(
-        optimizer,
-        lr_lambda=lambda epoch: min(1.0, (epoch + 1) / warmup_epochs)
-    )
+    # Optimizer
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
-    # 训练循环
-    best_diff = float('inf')
-    for epoch in range(epochs):
-        print(f"Epoch {epoch + 1}/{epochs}")
-        train_loop(train_loader, model, loss_fn, optimizer, scaler)
-        scheduler.step()
+    # Auxiliary dictionary to store epochs and difference values:
+    min_diff_dict = {}
 
-        # 每5个epoch验证一次
-        if (epoch + 1) % 5 == 0:
-            test_loop(test_loader, model, loss_fn)
+    for t in range(epochs):
+        print(f"Epoch {t+1}\n-------------------------------")
 
-    # Save model
-    torch.save(model.state_dict(), 'battery_rul_predictor.pth')
-    print("Training complete! Model saved.")
+        train_loop(train_loader, model, loss_fn, optimizer)
+
+        test_loop(test_loader, model, loss_fn)
+
+    print("Fertig!")
+
+
+# Save model
+torch.save(NeuralNet.state_dict(), os.getcwd() + '/Datasets/FF_Net_1.pth')
+
+
+
